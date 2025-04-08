@@ -1,0 +1,168 @@
+
+// This is a reference for implementing a standalone Go backend
+// You would need to create these files in a separate Go project
+
+// main.go
+package main
+
+import (
+  "log"
+  "net/http"
+  "github.com/gin-gonic/gin"
+  "github.com/gin-contrib/cors"
+)
+
+func main() {
+  r := gin.Default()
+  
+  // Configure CORS
+  r.Use(cors.New(cors.Config{
+    AllowOrigins:     []string{"http://localhost:5173", "https://your-deployed-frontend.com"},
+    AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
+    AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+    AllowCredentials: true,
+  }))
+  
+  // Routes
+  api := r.Group("/api")
+  {
+    // Products
+    api.GET("/products", handlers.GetProducts)
+    api.GET("/products/:id", handlers.GetProductByID)
+    
+    // Orders
+    api.POST("/orders", handlers.CreateOrder)
+    api.GET("/orders/:id", handlers.GetOrderByID)
+  }
+  
+  // Start server
+  log.Println("Starting server on :8080")
+  r.Run(":8080")
+}
+
+// handlers/products.go
+package handlers
+
+import (
+  "net/http"
+  "strconv"
+  "github.com/gin-gonic/gin"
+  "your-project/models"
+  "your-project/database"
+)
+
+func GetProducts(c *gin.Context) {
+  var products []models.Product
+  
+  // Get query parameters for filtering
+  category := c.Query("category")
+  featured := c.Query("featured")
+  
+  if err := database.DB.Where("category = ? OR ? = ''", category, category).
+     Where("featured = ? OR ? = ''", featured, featured).
+     Find(&products).Error; err != nil {
+    c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+    return
+  }
+  
+  c.JSON(http.StatusOK, products)
+}
+
+func GetProductByID(c *gin.Context) {
+  id, err := strconv.Atoi(c.Param("id"))
+  if err != nil {
+    c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+    return
+  }
+  
+  var product models.Product
+  if err := database.DB.First(&product, id).Error; err != nil {
+    c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+    return
+  }
+  
+  c.JSON(http.StatusOK, product)
+}
+
+// models/product.go
+package models
+
+type Product struct {
+  ID          uint   `json:"id" gorm:"primaryKey"`
+  Name        string `json:"name"`
+  Price       float64 `json:"price"`
+  Description string `json:"description"`
+  Image       string `json:"image"`
+  Category    string `json:"category"`
+  Featured    bool   `json:"featured"`
+}
+
+// models/order.go
+package models
+
+import "time"
+
+type Order struct {
+  ID        uint      `json:"id" gorm:"primaryKey"`
+  CustomerName  string    `json:"customerName"`
+  Email     string    `json:"email"`
+  Address   string    `json:"address"`
+  City      string    `json:"city"`
+  State     string    `json:"state"`
+  ZipCode   string    `json:"zipCode"`
+  Total     float64   `json:"total"`
+  Status    string    `json:"status"`
+  Items     []OrderItem `json:"items" gorm:"foreignKey:OrderID"`
+  CreatedAt time.Time `json:"createdAt"`
+}
+
+type OrderItem struct {
+  ID        uint    `json:"id" gorm:"primaryKey"`
+  OrderID   uint    `json:"orderId"`
+  ProductID uint    `json:"productId"`
+  Name      string  `json:"name"`
+  Price     float64 `json:"price"`
+  Quantity  int     `json:"quantity"`
+}
+
+// database/db.go
+package database
+
+import (
+  "log"
+  "gorm.io/gorm"
+  "gorm.io/driver/postgres" // or sqlite, mysql, etc.
+  "your-project/models"
+)
+
+var DB *gorm.DB
+
+func Connect() {
+  dsn := "host=localhost user=postgres password=password dbname=ecommerce port=5432 sslmode=disable"
+  db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+  if err != nil {
+    log.Fatal("Failed to connect to database:", err)
+  }
+  
+  // Migrate the schema
+  db.AutoMigrate(&models.Product{}, &models.Order{}, &models.OrderItem{})
+  
+  DB = db
+}
+
+// Seed data if needed
+func SeedDatabase() {
+  var count int64
+  DB.Model(&models.Product{}).Count(&count)
+  
+  if count == 0 {
+    products := []models.Product{
+      {Name: "Minimalist Desk Lamp", Price: 59.99, Description: "A sleek, adjustable desk lamp with touch controls and multiple lighting modes.", Image: "/placeholder.svg", Category: "lighting", Featured: true},
+      // Add more seed products from your current data.ts
+    }
+    
+    for _, product := range products {
+      DB.Create(&product)
+    }
+  }
+}
